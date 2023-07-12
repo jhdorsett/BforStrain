@@ -1,17 +1,15 @@
-clear all
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% 
 
 %load the mat file generated in setup_mesh
-load mesh_wus_creep
-
-%filename for saving Greens functions in mat file
-saveGreens = 'test_Greens'; 
+%load mesh_wus_nocreep
+load mesh_WUS_Johnson2023
 
 %% No need to modify below
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+addpath tools
 
 %assign data to triangles
 find_triangles_data
@@ -35,8 +33,9 @@ if ~isempty(PatchEnds)
 end
 
 nu = .25;  %Poisson's ratio
-[Ge_x,Ge_y,Gn_x,Gn_y,GExx_x,GExy_x,GEyy_x,GExx_y,GExy_y,GEyy_y] = buildG_PointForce(tri_centroids,nodes,nu);
+%convert to llh
+tri_centroids_llh = local2llh(tri_centroids(:,1:2)',fliplr(origin))';
+nodes_llh = local2llh(nodes',fliplr(origin))';
+[Ge_x,Ge_y,Gn_x,Gn_y,GExx_x,GExy_x,GEyy_x,GExx_y,GExy_y,GEyy_y,Gomega_x,Gomega_y] = buildG_PointForce(tri_centroids,nodes,nu);
 
-fprintf('\n \n %s \n \n', 'Saving Greens Functions')
 
-save(saveGreens)

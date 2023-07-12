@@ -2,21 +2,29 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Input Section
 
-%load the mat file generated in build_bodyforce_Greens
-%comment out line below if variables already loaded in workspace
-load test_Greens
-
-
-
 %specify range of beta values (weights on minimizing body forces)
-%betas = linspace(6.1579,15,15);
-betas = 10;
+betas = [40 45 50];
 
+%compute uncertainties?  set ucertainty = true or false
+%computing uncertainties is slow
+uncertainty = false;
 %number of realizations of strain rate for each beta value
-num = 100;
+num = 500;
 
 %relative weight on fitting creep rate data (creeping faults)
 Wcreep = 1;
+
+% optional two-step minimization of strain rates below threshold value
+% set twostep = true or false
+% relative weight (gamma) on minimizing strain rates below strain_threshold
+%(micro-strain per year)
+twostep = false;
+gamma = 400;
+strain_threshold = 9e-3;  %micro-strain per year
+%x and y boundaries for strain rate minimization (strain rates not
+%minimized outside of these boundaries)
+minimize_xbound = [-600 1000];
+minimize_ybound = [-800 1000];
 
 %name of mat file for saving inversion results
 savename = 'test_inversion';
@@ -81,9 +89,6 @@ else
 end
 
 %build realizations
-
-
-
 Exx_realizations = [];
 Exy_realizations = [];
 Eyy_realizations = [];
@@ -113,61 +118,133 @@ for k=1:length(betas)
         GL = sparse([GG;beta*L]);
         d0 = sparse([dd;zeros(size(L,1),1)]);
     end
-    mhat = GL\d0;
+
+    tic; mhat0 = GL\d0; T = toc;
+    
+     
+    disp(['Completed first inversion step in ' num2str(T) ' seconds.']);
+
+     if twostep 
+    
+         Exxs = GExx*mhat0;
+         Exys = GExy*mhat0;
+         Eyys = GEyy*mhat0;
+         max_shear = sqrt((Exxs-Eyys).^2 + Exys.^2);
+    
+         ind_boundaries = tri_centroids(:,1)>minimize_xbound(1) & tri_centroids(:,1)<minimize_xbound(2) & tri_centroids(:,2)>minimize_ybound(1) & tri_centroids(:,2)<minimize_ybound(2);
+         ind_threshold = (max_shear < strain_threshold) & ind_boundaries;
+
+         disp(['Minimizing strain rates in ' num2str(sum(ind_threshold)/length(ind_threshold)*100) ' % of cells.'])
+
+         L_iter = [GExx(ind_threshold,:);GExy(ind_threshold,:);GEyy(ind_threshold,:)];
+         GL_iterate = [GL; gamma*L_iter] ;
+         d0_iterate = [d0; zeros(3*sum(ind_threshold),1)];
+
+
+         tic;  mhat = lsqr(GL_iterate,d0_iterate,[],1500,[],[],mhat0);  T = toc;
+         disp(['Completed second (minimization) inversion step in ' num2str(T) ' seconds.']);
+
+
+     else
+
+         mhat = mhat0;  %use first step as solution
+
+     end
+
+    %predicted velocities using mhat computed above
     if ~isempty(PatchEnds)
         dhat = [G Gcreep([ind;ind],:)]*mhat;
     else
         dhat = G*mhat;
     end
 
- %propogate errors to strain rate
-    if ~isempty(PatchEnds)
-        Gsharp = (GG'*GG+beta^2*L'*L+Wcreep^2*Lcreep'*Lcreep)\GG';
-    else
-        Gsharp = (GG'*GG+beta^2*L'*L)\GG';
-    end
-    Cov_bf = Gsharp*Gsharp';  %note, data covariane is excluded because Gw is weighted
 
-    Cov_exx = GExx*Cov_bf*GExx';
-    Cov_exy = GExy*Cov_bf*GExy';
-    Cov_eyy = GEyy*Cov_bf*GEyy';
-     
-     Exxs = GExx*mhat;
-     Exys = GExy*mhat;
-     Eyys = GEyy*mhat;
+    %propogate errors to strain rate
+    if uncertainty 
+
+        if twostep
     
+           if ~isempty(PatchEnds)
+               Ginv = (GG'*GG+beta^2*L'*L + Wcreep^2*Lcreep'*Lcreep + gamma*L_iter'*L_iter);
+           else
+               Ginv = (GG'*GG+beta^2*L'*L + gamma*L_iter'*L_iter);
+           end
     
-     Cov_Ve = GVe*Cov_bf*GVe';
-     Cov_Vn = GVn*Cov_bf*GVn';
+        else
+    
+           if ~isempty(PatchEnds)
+               Ginv = (GG'*GG+beta^2*L'*L + Wcreep^2*Lcreep'*Lcreep);
+           else
+               Ginv = (GG'*GG+beta^2*L'*L);
+           end
+    
+        end
+    
+        Gsharp = Ginv\GG';
+       
+        %error propagation for strain rates
+        Cov_bf = Gsharp*Gsharp';  %note, data covariance is excluded because Gw is weighted
+        Cov_exx = GExx*Cov_bf*GExx';
+        Cov_exy = GExy*Cov_bf*GExy';
+        Cov_eyy = GEyy*Cov_bf*GEyy';
+    
+        %error propagation for velocities
+        Cov_Ve = GVe*Cov_bf*GVe';
+        Cov_Vn = GVn*Cov_bf*GVn';
+
+    end
+
+    %computed strain rates and velocities
+    Exxs = GExx*mhat;
+    Exys = GExy*mhat;
+    Eyys = GEyy*mhat;
      
-     Ves = GVe*mhat;
-     Vns = GVn*mhat;
+    Ves = GVe*mhat;
+    Vns = GVn*mhat;
      
-    Mhats(:,k) = mhat;
+    Mhats(:,k) = mhat;  %store all solutions
     
     
     %chi-squared
     chi_2(k) = sum((d./sig - dhat./sig).^2)/(length(d))
     
+
+    if uncertainty
   
-    J = size(Cov_exx,1);
-      
-    noise = mvnrnd(zeros(1,J),full(Cov_exx),num);
-    Exx_realizations = [Exx_realizations repmat(Exxs,1,num) + noise'];
+        %draw realizations from multivariate Gaussian distribution
+        tic 
     
-     noise = mvnrnd(zeros(1,J),full(Cov_exy),num);
-     Exy_realizations = [Exy_realizations repmat(Exys,1,num) + noise'];
-   
-     noise = mvnrnd(zeros(1,J),full(Cov_eyy),num);
-    Eyy_realizations = [Eyy_realizations repmat(Eyys,1,num) + noise'];
+        J = size(Cov_exx,1);
+          
+        noise = mvnrnd(zeros(1,J),full(Cov_exx),num);
+        Exx_realizations = [Exx_realizations repmat(Exxs,1,num) + noise'];
+        
+         noise = mvnrnd(zeros(1,J),full(Cov_exy),num);
+         Exy_realizations = [Exy_realizations repmat(Exys,1,num) + noise'];
+       
+         noise = mvnrnd(zeros(1,J),full(Cov_eyy),num);
+        Eyy_realizations = [Eyy_realizations repmat(Eyys,1,num) + noise'];
+    
+        
+        noise = mvnrnd(zeros(1,J),full(Cov_Ve),num);
+        Ve_realizations = [Ve_realizations repmat(Ves,1,num) + noise'];
+        noise = mvnrnd(zeros(1,J),full(Cov_Vn),num);
+        Vn_realizations = [Vn_realizations repmat(Vns,1,num) + noise'];
+    
+        T = toc;
+    
+        disp(['Completed ' num2str(num) ' realizations in ' num2str(T) ' seconds.']);
 
-    
-    noise = mvnrnd(zeros(1,J),full(Cov_Ve),num);
-    Ve_realizations = [Ve_realizations repmat(Ves,1,num) + noise'];
-    noise = mvnrnd(zeros(1,J),full(Cov_Vn),num);
-    Vn_realizations = [Vn_realizations repmat(Vns,1,num) + noise'];
+    else
 
-    
+        Exx_realizations = [Exx_realizations Exxs];
+        Exy_realizations = [Exy_realizations Exys];
+        Eyy_realizations = [Eyy_realizations Eyys];
+
+        Ve_realizations = [Ve_realizations Ves];
+        Vn_realizations = [Vn_realizations Vns];
+    end
+
     
     save(savename,'chi_2','Mhats','Exx_realizations','Exy_realizations','Eyy_realizations','Ve_realizations','Vn_realizations')
     

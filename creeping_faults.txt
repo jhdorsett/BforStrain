@@ -1,4 +1,3 @@
-% fault id, lon endpoint 1, lat endpoint 1, lon endpoint 2, lat endpoint 2, creep rate (mm/yr)
 32,-120.3,35.752,-120.56,36.003,15
 49,-118.92,34.824,-118.87,34.828,0.1
 49,-118.87,34.828,-118.82,34.849,0.1

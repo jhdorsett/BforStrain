@@ -22,7 +22,25 @@ std_maxshear = std(max_shear_realizations,[],2);
 mean_dilatation = Exx_mean + Eyy_mean;
 std_dilatation = std(dilatation_realizations,[],2);
 
+Ve_mean = mean(Ve_realizations,2);
+Vn_mean = mean(Vn_realizations,2);
 
+
+%plot fit to GPS vels
+ind = ~isnan(Ve_centroids);
+figure
+subplot(121)
+scale = 0.2/(max(sqrt(Ve_centroids(ind).^2+Vn_centroids(ind).^2))/(max(tri_centroids(ind,1))-min(tri_centroids(ind,1))));
+quiver(tri_centroids(ind,1),tri_centroids(ind,2),scale*Ve_centroids(ind),scale*Vn_centroids(ind),0);
+hold on
+quiver(tri_centroids(ind,1),tri_centroids(ind,2),scale*Ve_mean(ind),scale*Vn_mean(ind),0,'r');
+axis equal
+legend('observed','mean model')
+title('Fit to Velocities')
+
+subplot(122)
+quiver(tri_centroids(ind,1),tri_centroids(ind,2),scale*(Ve_centroids(ind)-Ve_mean(ind)),scale*(Vn_centroids(ind)-Vn_mean(ind)),0);
+title('Residual Velocities (data - model)')
 
 %% color plot of strain rates
 figure
@@ -39,10 +57,10 @@ colormap(jet)
 colorbar
 title('Mean Maximum Shear Strain Rate (micro-strain/yr)')
 set(gca,'ColorScale','log')
-caxis([0.01 1])
+caxis([0.001 1])
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 
 subplot(122)
@@ -58,10 +76,10 @@ colormap(jet)
 colorbar
 title('Two standard deviations (micro-strain/yr)')
 set(gca,'ColorScale','log')
-caxis([0.01 1])
+caxis([0.001 1])
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 drawnow
 
@@ -83,7 +101,7 @@ title('Mean Dilatation Rate (micro-strain/yr)')
 caxis([-.1 .1])
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 
 subplot(122)
@@ -102,7 +120,7 @@ title('Two standard deviations (micro-strain/yr)')
 caxis([-.1 .1])
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 drawnow
 
@@ -124,7 +142,7 @@ colormap(flipud(hot))
 title(' Maximum Shear Strain Rate exceeding 2\sigma uncertainties')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 
 ind = mean_maxshear>1*std_maxshear;
@@ -143,7 +161,7 @@ colormap(flipud(hot))
 title(' Maximum Shear Strain Rate exceeding 1\sigma uncertainties')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 drawnow
 
@@ -165,7 +183,7 @@ colorbar
 title(' STD divided by Mean Max Shear')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 drawnow
 
@@ -186,7 +204,7 @@ colorbar
 title(' STD divided by Mean Dilatation')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 drawnow
 
@@ -210,7 +228,7 @@ colormap(flipud(hot))
 title(' Dilatation Rate exceeding 2\sigma uncertainties')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 
 
@@ -230,7 +248,7 @@ colormap(flipud(hot))
 title(' Dilatation Rate exceeding 1\sigma uncertainties')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 
 drawnow
@@ -256,7 +274,7 @@ colormap(flipud(hot))
 title(' One Strain Rate Component exceeding 2\sigma uncertainties')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 
 
@@ -276,7 +294,7 @@ colormap(flipud(hot))
 title(' One Strain Rate Component exceeding 1\sigma uncertainties')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 
 
@@ -325,7 +343,7 @@ colormap(flipud(hot))
 title('One Principal strain Rate exceeding 2\sigma uncertainties')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 
 
@@ -344,7 +362,7 @@ colormap(flipud(hot))
 title(' One Principal Strain Rate exceeding 1.5\sigma uncertainties')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 
 
@@ -363,7 +381,7 @@ colormap(flipud(hot))
 title(' One Principal Strain Rate exceeding 1\sigma uncertainties')
 
 hold on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 drawnow
 
@@ -527,7 +545,7 @@ for k=1:skip:size(Exx_r,1)
 end
 grid on
 
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 axis equal
 
@@ -572,7 +590,7 @@ end
 grid on
 
 
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 axis equal
 title('Maximum shortening rate direction')
@@ -586,7 +604,7 @@ figure
 hold on
 scatter(tri_centroids(1:skip:end,1),tri_centroids(1:skip:end,2),50,-style(1:skip:end),'fill')
 grid on
-if exist('SegEnds'); if ~isempty(SegEnds); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end; end
+if exist('SegEnds'); plot(SegEnds(:,[1 3])',SegEnds(:,[2 4])','k'); end
 
 axis equal
 colormap(jet)
