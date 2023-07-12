@@ -7,17 +7,16 @@ clear all
 
 
 %mat file for saving mesh info
-savename = 'mesh_wus_creep';
+savename = 'mesh_WUS_Johnson2023';
 
 %origin for Caresian coordinate system
-%longitude needs to be -180 to 180 
 origin = [34 -120];
 
 %%
 %load GPS data file
 %format of columns:
-%   lon       lat       Ve       Vn       Se       Sn       Ren 
-data = load('nshm2023_wus_v1.gps');
+%   lon       lat       Ve       Vn       Se       Sn      
+data = load('Zeng_vels_augmented_PA_JDF.txt');
 
 
 %% load creeping fault data
@@ -29,19 +28,19 @@ data = load('nshm2023_wus_v1.gps');
 % NOTE: fault id is an integer, a unique identifier for each fault that section is considered to be a "continuous fault" 
 creeping_faults = load('creeping_faults.txt');
 %creeping_faults = [];
-patchL = 10;  %maximum patch length for creeping fault segments (smaller lengths might be desired for finer mesh)
+patchL = 15;  %maximum patch length
 
 
 %% mesh domain size
 %nominal node spacing
 nom_node_spacing = 100;  %km
 %longitude and latitude range of meshed domain
-lon_range = [-125 -115];
-lat_rage = [30 42];
+lon_range = [-127 -96];
+lat_rage = [26 54];
 %option to refine mesh in vicinity of GPS data
 %specifiy level of refinement, integer from 0 to 4
 %level 0 means no refinement, 4 is maximum refinement
-refine_mesh = 2;
+refine_mesh = 0;
 
 
 %% End Input Section
@@ -53,10 +52,6 @@ addpath mesh2d
 addpath tools
 
 
-%longitude needs to be -180 to 180
-ind =  data(:,1)>180;
-data(ind,1) = data(ind,1)-360;
-    
 
 
 %convert from lon,lat to local Cartesian
@@ -159,6 +154,6 @@ patch_stuff=make_triangular_patch_stuff(tri,[nodes 0*nodes(:,1)]);
 tri_areas = patch_stuff.area_faces;
 tri_centroids = patch_stuff.centroids_faces;
 
-save(savename, 'tri', 'nodes', 'tri_areas', 'tri_centroids','origin','PatchEnds','PatchCreepRates','Patch_id','xy_gps','Ve','Vn','Sige','Sign')    
+save(savename, 'tri', 'nodes', 'tri_areas', 'tri_centroids','origin','PatchEnds','PatchCreepRates','xy_gps','Ve','Vn','Sige','Sign')    
     
    

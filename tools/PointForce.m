@@ -1,5 +1,5 @@
 
-function [Ue_x,Ue_y,Un_x,Un_y,Exx_x,Exy_x,Eyy_x,Exx_y,Exy_y,Eyy_y] = PointForce(xs,ys,x,y,nu)
+function [Ue_x,Ue_y,Un_x,Un_y,Exx_x,Exy_x,Eyy_x,Exx_y,Exy_y,Eyy_y,omega_x,omega_y] = PointForce(xs,ys,x,y,nu)
 
 %(xs,ys) is position of source
 %(x,y) are data/observation coordinates
@@ -47,4 +47,9 @@ Exy_x = 0.5*(dw_dx + dq_dy);
 Exx_y = dw_dx;
 Eyy_y = dp_dy;
 Exy_y = 0.5*(dp_dx + dw_dy);
+
+%rotation rate
+omega_x = .5*(dq_dy - dw_dx);
+omega_y = .5*(dw_dy - dp_dx);
+
 
