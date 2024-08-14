@@ -1,4 +1,3 @@
-
 ### Alpides configuration
 
 gps_file = 'data/GNSS_velocities_alpides.txt'    
@@ -15,11 +14,11 @@ creeping_file = 'data/creeping_faults.txt'
 origin = [-120,34] 
 lon_range = [-127, -96]
 lat_range = [26, 54]
-nom_node_spacing = 250.
+nom_node_spacing = 500.
 
 # mesh decimation factor (speeds up runtime, useful for debugging large scenarios)
 # set = 1 for no decimation
-decimate = 4
+decimate = 8
 
 # creeping patch length
 patchL = 15.
@@ -37,9 +36,9 @@ Gshear = 1
 betas = [40]
 
 
-uncertainty = False
+uncertainty = True
 # number of realizations of strain rate for each beta value
-num = 50
+num = 10
 # relative weight on fitting creep rate data (creeping faults)
 Wcreep = 1
 # optional two-step minimization of strain rates below threshold value

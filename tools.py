@@ -33,6 +33,10 @@ class build_G_pointforce:
     """
     def __init__(self,mesh):
         # for legibility in math below...
+
+        print("")
+        print("Computing Body Force Green's Functions")
+
         nu = params.nu
 
         x_diff = mesh.tri_centroids[:, 0][:, np.newaxis] - mesh.nodes[:, 0]
@@ -66,9 +70,6 @@ class build_G_pointforce:
         self.GExy = np.concatenate([Exy_x, Exy_y], axis=1)
         self.GEyy = np.concatenate([Eyy_x, Eyy_y], axis=1)
 
-
-        print("")
-        print("Computing Body Force Green's Functions")
 
 class build_G_creep:
     """
@@ -1029,5 +1030,12 @@ def disloc3D_wrapper(m,coordinates,return_stress=False,return_2d=False):
             else:
                 return(displacement,gradient)
 
-
-
+# cholesky factorization much faster than numpy's standard multivariate_normal
+# which uses svd for legacy reasons (?)
+# still much slower than matlab's mvnrnd, but improved
+# currently not using.
+def chol_mvnrnd(mean, cov, num):
+    result = np.empty((num,mean.size))
+    for i in range(num):
+        result[i,:] = mean + np.linalg.cholesky(cov) @ np.random.standard_normal(mean.size)
+    return(result)

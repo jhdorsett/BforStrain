@@ -5,6 +5,9 @@ import scipy
 import pickle
 import pyvista as pv
 import matplotlib.path as MPLpoly
+import matplotlib.tri as tri
+from matplotlib.colors import LogNorm, Normalize
+
 import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon
 from datetime import datetime
@@ -20,7 +23,7 @@ class bounding_box:
         if not range:
             [self.minx, self.miny] = tools.llh2local(params.lon_range[0],params.lat_range[0])
             [self.maxx, self.maxy] = tools.llh2local(params.lon_range[1],params.lat_range[1])
-
+            
         else:
             [self.minx, self.miny] = range[0,:]
             [self.maxx, self.maxy] = range[1,:]
@@ -59,6 +62,10 @@ class Velocity:
         self.Sige = Sige
         self.Sign = Sign
 
+    def mag(self):
+        return(np.sqrt(self.Ve**2+self.Vn**2))
+    
+    
 # since pickle files just return objects, these are the same function
 
 def load(filename):
@@ -81,7 +88,7 @@ class Mesh:
             self.lon[ind] = self.lon[ind]-360
             print("Longitude data appears to span 0-360, applying correction.")
 
-        self.xy_gps = tools.llh2local(self.lon,self.lat) 
+        self.xy_gps = tools.llh2local(self.lon,self.lat)
 
         self.vel = Velocity(data[:, 2],data[:, 3],data[:, 4],data[:, 5])
         # set minimum velocity sigma
@@ -103,7 +110,6 @@ class Mesh:
         if self.creeping:
             self.getPM()
 
-        self.assign_centroids()
 
     def assign_centroids(self):
         
@@ -116,6 +122,7 @@ class Mesh:
             inside=path.contains_points(self.xy_gps)
             data_tri[inside]=k
 
+        num_data_tri = np.full(self.tri.shape[0], np.nan)
         Ve_centroids = np.full(self.tri.shape[0], np.nan)
         Vn_centroids = np.full(self.tri.shape[0], np.nan)
         Sige_centroids = np.full(self.tri.shape[0], np.nan)
@@ -123,6 +130,7 @@ class Mesh:
 
         for k in range(self.tri.shape[0]):
             ind = (data_tri == k )  
+            num_data_tri[k] = sum(ind)
             if np.sum(ind) > 0:
                 W_sige = 1.0 / self.vel.Sige[ind]
                 W_sign = 1.0 / self.vel.Sign[ind]
@@ -133,6 +141,7 @@ class Mesh:
                 Sige_centroids[k] = np.sqrt(np.sum(self.vel.Sige[ind]**2))
                 Sign_centroids[k] = np.sqrt(np.sum(self.vel.Sign[ind]**2))
 
+        self.num_data_tri = num_data_tri
         self.vel_centroids = Velocity(Ve_centroids,Vn_centroids,Sige_centroids,Sign_centroids)
         self.ind = np.squeeze(~np.isnan(Ve_centroids))        
 
@@ -159,60 +168,108 @@ class Mesh:
             center_y
         ), axis=-1)
 
-    def plot_mesh(self,score=False):
+    def plot_vels(self, Ve=None, Vn=None, colormap='viridis',plot_centroid=False,residuals=False):
 
-        fig, ax = plt.subplots()
-        ax.set_aspect('equal')
-
-        colormap=plt.get_cmap('viridis')
-        if isinstance(score, bool):
-            colors = colormap(self.score)
+        if type(Ve) != type(Vn):
+            print("Make sure to input east and north components of velocity vector as separate arguments")
+            return
+        
+        # Scale calculation
+        scale = 0.2 / (np.max(np.sqrt(self.vel_centroids.Ve[self.ind]**2 + self.vel_centroids.Vn[self.ind]**2)) /
+                    (np.max(self.tri_centroids[self.ind, 0]) - np.min(self.tri_centroids[self.ind, 0])))
+        
+        triang = tri.Triangulation(self.nodes[:, 0], self.nodes[:, 1], self.tri)
+        if residuals:
+            fig, axes = plt.subplots(1, 2, figsize=(14, 7))
         else:
-            min_score = score.min()
-            max_score = score.max()
-            normalized_score = (score - min_score) / (max_score - min_score)
-            colors=colormap(normalized_score)
+            fig, axes = plt.subplots(1, 1, figsize=(7, 7))
+            axes=[axes]
 
-        # Loop through each triangle and plot
-        for tri,color in zip(self.tri,colors):
-            polygon = Polygon(self.nodes[tri], closed=True, edgecolor='k', facecolor=color[:3], alpha=color[0])
-            ax.add_patch(polygon)
-
-        ax.set_xlabel('km')
-        x_min, x_max = self.nodes[:, 0].min(), self.nodes[:, 0].max()
-        y_min, y_max = self.nodes[:, 1].min(), self.nodes[:, 1].max()
+        if plot_centroid:
+            Vmag = np.sqrt(self.vel_centroids.Ve**2+self.vel_centroids.Vn**2)
+            # Create the figure and subplots
+            tripcolor = axes[0].tripcolor(triang, Vmag, cmap=colormap, edgecolors='k')
         
-        ax.set_xlim(x_min , x_max )
-        ax.set_ylim(y_min , y_max )
-        ax.set_title('Smooth2 score metric')
-        plt.show()
-
-    def plot_vels(self):
-
-        fig1, ax1=plt.subplots()
-        V_centroids = np.sqrt(self.vel_centroids.Ve**2+self.vel_centroids.Vn**2)
-        ax1.tripcolor(self.nodes[:,0], self.nodes[:,1],self.tri,linewidth=0.25,facecolors=V_centroids,edgecolors='k')
-        ax1.quiver(self.xy_gps[:,0],self.xy_gps[:,1],self.vel.Ve,self.vel.Vn, color='red')
-        fig1.gca().set_aspect('equal')
-        ax1.set_title('velocity data')
-        # Make the plot interactive
+        axes[0].quiver(self.tri_centroids[self.ind, 0], self.tri_centroids[self.ind, 1],
+                scale * self.vel_centroids.Ve[self.ind], scale * self.vel_centroids.Vn[self.ind], angles='xy', scale_units='xy', scale=1)
+        # if modeled velocity provided, plot it too
+        if Ve is not None:
+            axes[0].quiver(self.tri_centroids[self.ind, 0], self.tri_centroids[self.ind, 1],
+                    scale * Ve[self.ind], scale * Vn[self.ind], angles='xy', scale_units='xy', scale=1, color='r')
+            
+        axes[0].set_aspect('equal')
+        if plot_centroid:
+            plt.colorbar(tripcolor, ax=axes[0])
         
-        # Keep the script running to allow viewing of the plots
-        plt.show()
-    
-    def plot_results(self,X,Y):
-        XY = np.sqrt(X**2+Y**2)
-        #plt.tripcolor(nodes[:,0], nodes[:,1],triDel.simplices.copy(),linewidth=0.25,facecolors=areas)
-        fig=plt.tripcolor(self.nodes[:,0], self.nodes[:,1],self.tri,linewidth=0.25,facecolors=XY,edgecolors='k')
-        plt.figsize=(8,8)
-        plt.quiver(self.xy_gps[:,0],self.xy_gps[:,1],self.vel.Ve,self.vel.Vn, color='red')
-        #plt.plot(PatchEnds[:, [0, 2]].T, PatchEnds[:, [1, 3]].T, color='blue')  # Plot all line segments at once
-        plt.gca().set_aspect('equal')
-        plt.title('modeled velocity')
-        # Make the plot interactive
-        plt.colorbar()
-        plt.show()
+        if self.creeping:
+            axes[0].plot([self.SegEnds[:, 0], self.SegEnds[:, 2]],
+                    [self.SegEnds[:, 1], self.SegEnds[:, 3]], 'k-', linewidth=1.5)
+        
+        if residuals:
+            if (Ve is None) | (Vn is None):
+                print("Can't compute residuals if no model data is provided.")
+                return
+            
+            # Subplot 2: Residual Velocities (data - model)
+            axes[1].quiver(self.tri_centroids[self.ind, 0], self.tri_centroids[self.ind, 1],
+                    scale * (self.vel_centroids.Ve[self.ind] - Ve[self.ind]), 
+                    scale * (self.vel_centroids.Vn[self.ind] - Vn[self.ind]), 
+                    angles='xy', scale_units='xy', scale=1)
+            
+            axes[1].set_aspect('equal')
 
+            if self.creeping:
+                axes[1].plot([self.SegEnds[:, 0], self.SegEnds[:, 2]],
+                            [self.SegEnds[:, 1], self.SegEnds[:, 3]], 'k-', linewidth=1.5)         
+
+        return(axes)
+            
+    def plot(self,values=None, colormap='viridis', scale=None, cbar=True, lonlat=False,edges=False):
+
+        if values is None:
+            values=[self.score]
+
+        # convert back to lonlat and make triangulation
+        if lonlat:
+            nodes_llh = tools.local2llh(self.nodes[:, 0], self.nodes[:, 1])
+            triang = tri.Triangulation(nodes_llh[:,0],nodes_llh[:,1], self.tri)
+        else:
+            triang = tri.Triangulation(self.nodes[:, 0], self.nodes[:, 1], self.tri)
+
+        # make sure values is a list so we can loop through below
+        if isinstance(values, np.ndarray):
+            values = [values]
+
+        n_vals = len(values)
+        fig, axes = plt.subplots(1, n_vals, figsize=(6 * n_vals, 4+n_vals))
+
+        if n_vals == 1:
+            axes = [axes]  # Ensure axes is always a list for consistent indexing
+
+        for i, (val, ax) in enumerate(zip(values, axes)):
+            plt.subplot(1, n_vals, i + 1)
+            if edges:
+                tripcolor = ax.tripcolor(triang, val, cmap=colormap, norm=scale,edgecolors='k')
+            else:
+                tripcolor = ax.tripcolor(triang, val, cmap=colormap, norm=scale)    
+            if cbar:
+                plt.colorbar(tripcolor, ax=ax)
+            ax.set_aspect('equal')
+
+            if self.creeping:
+                if lonlat:
+                    SegEnds_llh = tools.local2llh(self.SegEnds[:,0],self.SegEnds[:,1])  
+                    SegEnds_llh= np.hstack((SegEnds_llh, tools.local2llh(self.SegEnds[:,2],self.SegEnds[:,3])))
+                    ax.plot([SegEnds_llh[:, 0], SegEnds_llh[:, 2]],
+                            [SegEnds_llh[:, 1], SegEnds_llh[:, 3]], 'k-', linewidth=1.5)
+                else:
+                    ax.plot([self.SegEnds[:, 0], self.SegEnds[:, 2]],
+                            [self.SegEnds[:, 1], self.SegEnds[:, 3]], 'k-', linewidth=1.5)
+        
+        if n_vals == 1:
+                    return(axes[0])
+        return axes
+        
     def save(self,filename=False):
         import pickle
         # if file unspecified, generate default name
@@ -223,6 +280,8 @@ class Mesh:
         pickle.dump(self,output)
         output.close()
 
+    # for visualization in paraview
+    # saves mean results
     def save_vtk(self,results=False,filename=False,save_data=False):
 
         # if file unspecified, generate default name
@@ -299,6 +358,74 @@ class inversion_results:
             self.Cov_exx = []
             self.Cov_eyy = []
             self.Cov_exy = []
+
+    def post_process(self):
+        # overwrite the previous lists with new numpy arrays
+        print("Unwrapping results to 2D numpy arrays. Calculating dilitation and max shear.")
+
+        if len(self.Exx) == 0:
+            print("Run inversion before postprocessing")
+            return
+                
+        Ve_r = np.stack((self.Ve))
+        Vn_r = np.stack((self.Vn))
+
+        Exx_r = np.stack((self.Exx))
+        Exy_r = np.stack((self.Exy))
+        Eyy_r = np.stack((self.Eyy))
+
+        if params.uncertainty:
+            n = Ve_r.shape[1]
+
+            Ve_r = Ve_r.transpose(1, 2, 0).reshape(n, -1).T
+            Vn_r = Vn_r.transpose(1, 2, 0).reshape(n, -1).T
+            Exx_r = Exx_r.transpose(1, 2, 0).reshape(n, -1).T
+            Exy_r = Exy_r.transpose(1, 2, 0).reshape(n, -1).T
+            Eyy_r = Eyy_r.transpose(1, 2, 0).reshape(n, -1).T
+
+        self.max_shear = np.sqrt((Exx_r-Eyy_r)**2+Exy_r**2)
+        self.dilatation = Exx_r + Eyy_r
+
+        
+        self.Ve = Ve_r
+        self.Vn = Vn_r
+        self.Exx = Exx_r
+        self.Exy = Exy_r
+        self.Eyy = Eyy_r
+
+    # returns eigenvectors and values of computed 2D strain tensor
+    def compute_Eeig(self):
+        n = self.Exx.shape[0]
+        m = self.Exx.shape[1]
+        # Initialize arrays to store results
+        self.minVecs = np.zeros((2, n, m))
+        self.maxVecs = np.zeros((2, n, m))
+        self.minvals = np.zeros((n, m))
+        self.maxvals = np.zeros((n, m))
+
+        for j in range(m):
+            for k in range(n):
+
+                Exx = self.Exx[k,j]
+                Exy = self.Exy[k,j]
+                Eyy = self.Eyy[k,j]
+
+                E = np.array([(Exx, Exy),
+                              (Exy,Eyy)])
+                
+                [val, vec] = np.linalg.eig(E)[0:2]
+                
+                # Sort eigenvalues and eigenvectors
+                idx = np.argsort(val)
+                val = val[idx]
+                vec = vec[:, idx]
+                
+                # Store results
+                self.minVecs[:, k, j] = vec[:, 0]
+                self.maxVecs[:, k, j] = vec[:, 1]
+                self.minvals[k, j] = val[0]
+                self.maxvals[k, j] = val[1]
+
 
     def save(self,filename=False):
         import pickle
