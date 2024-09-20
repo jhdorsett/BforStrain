@@ -2,23 +2,23 @@
 
 gps_file = 'data/GNSS_velocities_alpides.txt'    
 creeping_file = []
-origin = [32.5, 35] 
+origin = [32.5, 35]
 lon_range = [-15,142]
-lat_range = [5, 60]
+lat_range = [5, 60] 
 nom_node_spacing = 400.
 
-## West US configuration
+### West US configuration
 
 gps_file = 'data/Zeng_vels_augmented_PA_JDF.txt'
 creeping_file = 'data/creeping_faults.txt'  
 origin = [-120,34] 
 lon_range = [-127, -96]
 lat_range = [26, 54]
-nom_node_spacing = 500.
+nom_node_spacing = 100.
 
-# mesh decimation factor (speeds up runtime, useful for debugging large scenarios)
-# set = 1 for no decimation
-decimate = 8
+### Meshing parameters
+# mesh decimation factor (speeds up runtime, useful for debugging large scenarios), set = 1 for no decimation
+decimate = 1
 
 # creeping patch length
 patchL = 15.
@@ -26,19 +26,16 @@ patchL = 15.
 #option to refine mesh in vicinity of GPS data
 # 0 = no refinement, 1-4 provides some
 refine_mesh = 0
-
-
-
 refine = 1
+
 nu = 0.25
 Gshear = 1
 
 betas = [40]
-
-
-uncertainty = True
+# Compute uncertainties? 
+uncertainty = False
 # number of realizations of strain rate for each beta value
-num = 10
+num = 25
 # relative weight on fitting creep rate data (creeping faults)
 Wcreep = 1
 # optional two-step minimization of strain rates below threshold value

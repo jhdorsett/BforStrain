@@ -76,9 +76,9 @@ def load(filename):
     return(pickle.load(pkl_file))
 
 class Mesh:
-    def __init__(self):
+    def __init__(self,file):
 
-        data = np.loadtxt(params.gps_file,delimiter=',')
+        data = np.loadtxt(file,delimiter=',')
         data = data[::params.decimate,:]
         self.lon = data[:,0]
         self.lat = data[:,1]
@@ -224,7 +224,7 @@ class Mesh:
 
         return(axes)
             
-    def plot(self,values=None, colormap='viridis', scale=None, cbar=True, lonlat=False,edges=False):
+    def plot(self,values=None, colormap='viridis', scale=None, cbar=True, lonlat=False,edges=False,borders=False):
 
         if values is None:
             values=[self.score]
@@ -248,6 +248,8 @@ class Mesh:
 
         for i, (val, ax) in enumerate(zip(values, axes)):
             plt.subplot(1, n_vals, i + 1)
+
+
             if edges:
                 tripcolor = ax.tripcolor(triang, val, cmap=colormap, norm=scale,edgecolors='k')
             else:
@@ -265,7 +267,10 @@ class Mesh:
                 else:
                     ax.plot([self.SegEnds[:, 0], self.SegEnds[:, 2]],
                             [self.SegEnds[:, 1], self.SegEnds[:, 3]], 'k-', linewidth=1.5)
-        
+            
+            if borders:
+                tools.plot_borders(ax,lonlat)
+
         if n_vals == 1:
                     return(axes[0])
         return axes
@@ -462,8 +467,7 @@ def Inversion(mesh):
         GExx = Gpoint.GExx
         GExy = Gpoint.GExy
         GEyy = Gpoint.GEyy
-
-
+    
     G = np.concatenate([GVe[mesh.ind,:],GVn[mesh.ind,:]])
 
     numobs = mesh.nodes.shape[0]*2

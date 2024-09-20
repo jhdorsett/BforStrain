@@ -4,6 +4,7 @@ from scipy.spatial import Voronoi, Delaunay
 import params
 import pandas as pd
 import pyproj
+import geopandas as gpd
 
 ###############
 # Coordinate transforms defined using pyproj, called via wrapper functions
@@ -16,6 +17,23 @@ def llh2local(lons,lats):
 def local2llh(xs,ys): 
      return(np.array(local_to_llh.transform(xs,ys)).T)
 
+### Read in borders...
+# naturalearthdata.com data downloaded from https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson
+borders = gpd.read_file('data/ne_10m_admin_0_countries.geojson')
+borders_xy = borders.to_crs(local_crs)
+
+def plot_borders(ax,lonlat=False,width=0.5):
+     
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+
+    if lonlat:
+        borders.boundary.plot(ax=ax, linewidth=width, color='black')
+    else:
+        borders_xy.boundary.plot(ax=ax, linewidth=width, color='black')
+        
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
 
 
 class build_G_pointforce:
