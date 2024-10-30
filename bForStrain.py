@@ -65,7 +65,6 @@ class Velocity:
     def mag(self):
         return(np.sqrt(self.Ve**2+self.Vn**2))
     
-    
 # since pickle files just return objects, these are the same function
 
 def load(filename):
