@@ -3,23 +3,141 @@ from mesh2d import smooth2, tricon2
 from scipy.spatial import Voronoi, Delaunay
 import params
 import pandas as pd
-import pyproj
 import geopandas as gpd
+import disloc3d
 
-###############
-# Coordinate transforms defined using pyproj, called via wrapper functions
-local_crs = pyproj.CRS.from_proj4(f"+proj=tmerc +lat_0={params.origin[1]} +lon_0={params.origin[0]} +x_0=0 +y_0=0 +ellps=WGS84 +units=km +no_defs")
-llh_to_local = pyproj.Transformer.from_crs(pyproj.CRS("EPSG:4326"), local_crs, always_xy=True)
-local_to_llh = pyproj.Transformer.from_crs(local_crs, pyproj.CRS("EPSG:4326"), always_xy=True)
+def make_enu_crs(olon, olat, unit = None):
+    # uses well known text (wkt) format to generate a CRS compatible with geodataframes
+    # equivalent to a local ENU projection
 
-def llh2local(lons,lats): 
-     return(np.array(llh_to_local.transform(lons,lats)).T)
-def local2llh(xs,ys): 
-     return(np.array(local_to_llh.transform(xs,ys)).T)
+    if unit == "kilometer": unit = "kilometre"
+    if unit == "km": unit = "kilometre"
+    if unit == "m": unit = "meter"
+    
+    if unit is None:
+        unit = "kilometre"
+        print("Assuming units in kilometers as default")
+        print("Explicitly define unit as 'kilometer', 'km', 'meter', or 'm' to supress this warning.")
+
+    elif unit not in ["kilometre", "meter"]:
+        raise ValueError("Define unit as 'kilometer', 'km', 'meter', or 'm'.")
+    
+    # Set the unit value for the WKT
+    unit_value = "1000" if unit == "kilometre" else "1"
+
+    wkt_crs = f"""
+    PROJCS["Local ENU",
+        GEOGCS["WGS 84",
+            DATUM["WGS_1984",
+                SPHEROID["WGS 84",6378137,298.257223563]],
+            PRIMEM["Greenwich",0],
+            UNIT["degree",0.0174532925199433]],
+        PROJECTION["Orthographic"],
+        PARAMETER["latitude_of_origin",{olat}],
+        PARAMETER["central_meridian",{olon}],
+        PARAMETER["false_easting",0],
+        PARAMETER["false_northing",0],
+        UNIT["{unit}",{unit_value}]]
+    """
+    return wkt_crs
+
+def llh2local(lons,lats,origin=params.origin):
+    """
+    Converts from longitude and latitude to local coordinates (x, y) in kilometers.
+    """
+    
+    # WGS84 Ellipsoid Constants
+    a = 6378137.0  # Semi-major axis in meters
+    e = 0.0818191908426  # Eccentricity
+
+    # Convert degrees to radians
+    lons =  np.radians(lons)
+    lats =  np.radians(lats)
+    origin = np.radians(origin)
+    
+    # Calculate differences in latitudes and longitudes
+    dlat = lats - origin[1]
+    dlon = lons - origin[0]
+    
+    # Ensure longitude differences are within [-pi, pi]
+    dlon = (dlon + np.pi) % (2 * np.pi) - np.pi
+    
+    # Compute average latitude and its sine/cosine
+    lat_avg = (lats + origin[1]) / 2
+    lat_avg_sin = np.sin(lat_avg)
+    lat_avg_cos = np.cos(lat_avg)
+    
+    # Meridian radius of curvature (M)
+    M = a * (1 - e**2) / (np.sqrt(1 - e**2 * lat_avg_sin**2))**3
+    
+    # Prime vertical radius of curvature (N)
+    N = a / np.sqrt(1 - e**2 * lat_avg_sin**2)
+    
+    # Compute local coordinates in meters
+    x = dlon * N * lat_avg_cos  # Easting
+    y = dlat * M                # Northing
+    
+    # Convert to kilometers
+    x_km = x / 1000
+    y_km = y / 1000
+    
+    return np.array((x_km, y_km)).T
+
+def local2llh(xs, ys, origin=params.origin):
+    """
+    Converts from local coordinates to longitude and latitude.
+    """
+    # Convert origin to radians
+    origin = np.radians(origin)
+    
+    a = 6378137.0  # Semi-major axis in meters
+    e = 0.0818191908426  # Eccentricity
+
+    # Unpack local coordinates and convert to meters
+    x = xs * 1000  # Easting in meters
+    y = ys * 1000  # Northing in meters
+    
+    # Initial guess for latitude: use origin latitude
+    lat = origin[1]
+    tol = 1e-10
+    max_iter = 10
+    iter_count = 0
+    diff = np.inf
+    
+    # Iteratively solve for latitude
+    while diff > tol and iter_count < max_iter:
+        lat_old = lat
+        lat_avg = (lat + origin[1]) / 2
+        lat_avg_sin = np.sin(lat_avg)
+        
+        # Meridian radius of curvature (M)
+        M = a * (1 - e**2) / (np.sqrt(1 - e**2 * lat_avg_sin**2))**3
+        
+        # Update latitude using the y local coordinate
+        lat = origin[1] + y / M
+        diff = np.max(np.abs(lat - lat_old))
+        iter_count += 1
+    
+    # Compute longitude using updated latitude
+    lat_avg = (lat + origin[1]) / 2
+    N = a / np.sqrt(1 - e**2 * np.sin(lat_avg)**2)
+    lon = origin[0] + x / (N * np.cos(lat_avg))
+    
+    # Convert longitude to [-180, 180] degrees
+    lon = (lon + np.pi) % (2 * np.pi) - np.pi
+    
+    # Convert back to degrees
+    lon = np.degrees(lon)
+    lat = np.degrees(lat)
+    
+    return np.array((lon, lat)).T
 
 ### Read in borders...
 # naturalearthdata.com data downloaded from https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson
 borders = gpd.read_file('data/ne_10m_admin_0_countries.geojson')
+###############
+# Coordinate transforms defined using pyproj, called via wrapper functions
+local_crs = make_enu_crs(olon=params.origin[0],olat=params.origin[1],unit='km')
 borders_xy = borders.to_crs(local_crs)
 
 def plot_borders(ax,lonlat=False,width=0.5):
@@ -34,7 +152,6 @@ def plot_borders(ax,lonlat=False,width=0.5):
         
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
-
 
 class build_G_pointforce:
     """
@@ -87,7 +204,6 @@ class build_G_pointforce:
         self.GExx = np.concatenate([Exx_x, Exx_y], axis=1)
         self.GExy = np.concatenate([Exy_x, Exy_y], axis=1)
         self.GEyy = np.concatenate([Eyy_x, Eyy_y], axis=1)
-
 
 class build_G_creep:
     """
@@ -168,33 +284,27 @@ class build_G_creep:
             for j in range(nhe):
                 taper = j / nhe
                 # create disloc3d fault plane with 1 unit of right lateral along strike slip
-                m1 = np.hstack([pf[j, :], -1, 0, 0])
+                m1 = np.hstack([pf[j, :], -1, 0, 0])                
                 
-                
-                # dont store stress value since we don't use it
-                U1, D = disloc3D_wrapper(m1, xobs, return_stress=False,return_2d=True)
-                
+                # dont store stress value since we don't use it                
+                U1, D, _ = disloc3d.dc3d_wrapper(pf[j,:],[-1,0,0],xobs.T)
                 # update G1 matrices
-                G1east_creep[:, k] += U1[0, :]
-                G1north_creep[:, k] += U1[1, :]
+                G1east_creep[:, k] += U1[:, 0]
+                G1north_creep[:, k] += U1[:, 1]
                 
                 # commented out lines for indexing if return_2d=False or unspecified
-                #G1Exy_creep[:, k] += 0.5 * (D[1, :] + D[3, :])
-                #G1Eyy_creep[:, k] += D[4, :]
-                G1Exx_creep[:, k] += D[0, :]
-                G1Exy_creep[:, k] += 0.5 * (D[1, :] + D[2, :])
-                G1Eyy_creep[:, k] += D[3, :]
+                G1Exy_creep[:, k] += 0.5 * (D[:, 1] + D[:, 3])
+                G1Eyy_creep[:, k] += D[:, 4]
+                G1Exx_creep[:, k] += D[:, 0]
 
                 # update G2 matrices 
-                G2east_creep[:, k]  += taper * U1[0, :]
-                G2north_creep[:, k] += taper * U1[1, :]
+                G2east_creep[:, k]  += taper * U1[:, 0]
+                G2north_creep[:, k] += taper * U1[:, 1]
 
                 # commented out lines for indexing if return_2d=False or unspecified
-                #G2Exy_creep[:, k] += taper * 0.5 * (D[1, :] + D[3, :])
-                #G2Eyy_creep[:, k] += taper * D[4, :]
-                G2Exx_creep[:, k] += taper * D[0, :]
-                G2Exy_creep[:, k] += taper * 0.5 * (D[1, :] + D[2, :])
-                G2Eyy_creep[:, k] += taper * D[3, :]
+                G2Exy_creep[:, k] += taper * 0.5 * (D[:, 1] + D[:, 3])
+                G2Eyy_creep[:, k] += taper * D[:, 4]
+                G2Exx_creep[:, k] += taper * D[:, 0]
 
                 del U1, D
 
@@ -438,622 +548,3 @@ def make_triangular_patch_stuff(tri, p):
         'area_faces': area_faces
     }
     return patch_stuff
-
-def checkInputs(disloc,coordinates):
-        if disloc.c < disloc.W * np.sin(disloc.delta) and np.array_equal(coordinates[2, :], -np.abs(coordinates[2, :])):
-                print('warning: physically impossible')
-                return(False)
-        elif disloc.c >= disloc.W * np.sin(disloc.delta) and np.array_equal(coordinates[2, :], -np.abs(coordinates[2, :])):
-                return(True)
-        else:
-                print('warning: All z should be negative.')
-                return(False)
-     
-def disloc3D(disloc,coordinates):
-    X, Y, z = coordinates[:3, :]
-    x,y=disloc.coordTrans(X,Y) #rorate into local system
-    L = disloc.L
-    W = disloc.W
-    c = disloc.c
-    delta = disloc.delta #dip in rad
-    angle_Str = disloc.strike # clockwise is positive
-    [Xc, Yc] = disloc.centroids #rupture centroids
-    [slip_str, slip_dip, tensile] = disloc.slip
-
-    nu=disloc.nu
-    Gshear=disloc.Gshear
-    youngs, alpha = disloc.elastic() # method in elastic class to compute these from nu and Gshear defined in class
-
-    # integrating
-    d = c - z
-    p = y * np.cos(delta) + d * np.sin(delta)
-
-    xi = np.array([x, x, x - L, x - L])
-    eta = np.array([p, p - W, p, p - W])
-
-    q = np.ones((4,x.size)) * y * np.sin(delta) - np.ones((4,x.size)) * d * np.cos(delta)
-
-    R = np.sqrt(xi**2 + eta**2 + q**2)
-
-    y_ = eta * np.cos(delta) + q * np.sin(delta)
-    d_ = eta * np.sin(delta) - q * np.cos(delta)
-    c_ = d_ + np.ones((4,x.size)) * z
-
-    # For displacement
-    X11 = 1 / (R * (R + xi))
-    X32 = (2 * R + xi) / (R**3 * (R + xi)**2)
-    X53 = (8 * R**2 + 9 * R * xi + 3 * xi**2) / (R**5 * (R + xi)**3)
-
-    Y11 = 1 / (R * (R + eta))
-    Y32 = (2 * R + eta) / (R**3 * (R + eta)**2)
-    Y53 = (8 * R**2 + 9 * R * eta + 3 * eta**2) / (R**5 * (R + eta)**3)
-
-    h = q * np.cos(delta) - np.ones((4,x.size)) * z
-    Z32 = np.sin(delta) / R**3 - h * Y32
-    Z53 = 3 * np.sin(delta) / R**5 - h * Y53
-
-    Y0 = Y11 - xi**2 * Y32
-    Z0 = Z32 - xi**2 * Z53
-
-    # Selecting a right root for theta
-    qsign = np.sign(q)
-    theta = np.arctan2(xi * eta, np.abs(q) * R)
-    theta = qsign * theta
-
-    X = np.sqrt(xi**2 + q**2)
-
-    if np.abs(np.cos(delta)) < 0.000001:
-        I3 = 1/2 * (eta / (R + d_) + y_ * q / ((R + d_)**2) - np.log(R + eta))
-        I4 = 1/2 * (xi * y_ / ((R + d_)**2))
-    else:
-        I3 = 1/np.cos(delta) * y_ / (R + d_) - 1 / np.cos(delta)**2 * (
-                np.log(R + eta) - np.sin(delta) * np.log(R + d_))
-        I4 = np.sin(delta) / np.cos(delta) * xi / (R + d_) + 2 / (np.cos(delta)**2) * np.arctan2(
-                eta * (X + q * np.cos(delta)) + X * (R + X) * np.sin(delta),
-                xi * (R + X) * np.cos(delta))
-
-    I1 = -(xi / (R + d_)) * np.cos(delta) - I4 * np.sin(delta)
-    I2 = np.log(R + d_) + I3 * np.sin(delta)
-
-    D11 = 1 / (R * (R + d_))
-
-    if np.abs(np.cos(delta)) < 0.000001:
-        K1 = (xi * q) / (R + d_) * D11
-        K3 = np.sin(delta) / (R + d_) * (xi**2 * D11 - 1)
-    else:
-        K1 = xi / np.cos(delta) * (D11 - Y11 * np.sin(delta))
-        K3 = 1 / np.cos(delta) * (q * Y11 - y_ * D11)
-
-    K2 = 1 / R + K3 * np.sin(delta)
-    K4 = xi * Y11 * np.cos(delta) - K1 * np.sin(delta)
-
-    J5 = -(d_ + y_**2 / (R + d_)) * D11
-    J2 = xi * y_ / (R + d_) * D11
-
-    if np.abs(np.cos(delta)) < 0.000001:
-        J6 = -y_ / (R + d_)**2 * (xi**2 * D11 - 1/2)
-        J3 = -xi / (R + d_)**2 * (q**2 * D11 - 1/2)
-    else:
-        J6 = 1 / np.cos(delta) * (K3 - J5 * np.sin(delta))
-        J3 = 1 / np.cos(delta) * (K1 - J2 * np.sin(delta))
-
-    J1 = J5 * np.cos(delta) - J6 * np.sin(delta)
-    J4 = -xi * Y11 - J2 * np.cos(delta) + J3 * np.sin(delta)
-
-    # ki
-    E = np.sin(delta) / R - y_ * q / R**3
-    F = d_ / R**3 + xi**2 * Y32 * np.sin(delta)
-    G = 2 * X11 * np.sin(delta) - y_ * q * X32
-    H = d_ * q * X32 + xi * q * Y32 * np.sin(delta)
-    P = np.cos(delta) / R**3 + q * Y32 * np.sin(delta)
-    Q = 3 * c_ * d_ / R**5 - (np.ones((4, 1)) * z * Y32 + Z32 + Z0) * np.sin(delta)
-
-    # li
-    E_ = np.cos(delta) / R + d_ * q / R**3
-    F_ = y_ / R**3 + xi**2 * Y32 * np.cos(delta)
-    G_ = 2 * X11 * np.cos(delta) + d_ * q * X32
-    H_ = y_ * q * X32 + xi * q * Y32 * np.cos(delta)
-    P_ = np.sin(delta) / R**3 - q * Y32 * np.cos(delta)
-    Q_ = (3 * c_ * y_) / R**5 + q * Y32 - (np.ones((4, 1)) * z * Y32 + Z32 + Z0) * np.cos(delta)
-
-    # strike slip 
-    if slip_str != 0:
-        # displacement
-        #uA
-        Su1A = theta/2 + alpha / 2 * xi * q * Y11
-        Su2A = alpha / 2 * q / R
-        Su3A = (1 - alpha) / 2 * np.log(R + eta) - alpha / 2 * q**2 * Y11
-        #uB
-        Su1B = -xi * q * Y11 - theta - (1 - alpha) / alpha * I1 * np.sin(delta)
-        Su2B = -q / R + (1 - alpha) / alpha * y_ / (R + d_) * np.sin(delta)
-        Su3B = q**2 * Y11 - (1 - alpha) / alpha * I2 * np.sin(delta)
-        #uC
-        Su1C = (1 - alpha) * xi * Y11 * np.cos(delta) - alpha * xi * q * Z32
-        Su2C = (1 - alpha) * (np.cos(delta) / R + 2 * q * Y11 * np.sin(delta)) - alpha * c_ * q / R**3
-        Su3C = (1 - alpha) * q * Y11 * np.cos(delta) - alpha * (c_ * eta / R**3 - np.ones((4, 1)) * z * Y11 + xi**2 * Z32)        
-        # displacement gradient
-        #jA
-        Sj1A = -(1 - alpha) / 2 * q * Y11 - alpha / 2 * (xi**2) * q * Y32
-        Sj2A = - alpha / 2 * xi * q / R**3
-        Sj3A = (1 - alpha) / 2 * xi * Y11 + alpha / 2 * xi * q**2 * Y32
-        #jB
-        Sj1B = xi**2 * q * Y32 - (1 - alpha) / alpha * J1 * np.sin(delta)
-        Sj2B = xi * q / R**3 - (1 - alpha) / alpha * J2 * np.sin(delta)
-        Sj3B = -xi * q**2 * Y32 - (1 - alpha) / alpha * J3 * np.sin(delta)
-        #jC
-        Sj1C = (1 - alpha) * Y0 * np.cos(delta) - alpha * q * Z0
-        Sj2C = -(1 - alpha) * xi * (np.cos(delta) / R**3 + 2 * q * Y32 * np.sin(delta)) + alpha * (
-                        3 * c_ * xi * q) / R**5
-        Sj3C = -(1 - alpha) * xi * q * Y32 * np.cos(delta) + alpha * xi * (
-                        (3 * c_ * eta) / R**5 - np.ones((4, 1)) * z * Y32 - Z32 - Z0)
-        #kA
-        Sk1A = (1 - alpha) / 2 * xi * Y11 * np.sin(delta) + d_ / 2 * X11 + alpha / 2 * xi * F
-        Sk2A = alpha / 2 * E
-        Sk3A = (1 - alpha) / 2 * (
-                        np.cos(delta) / R + q * Y11 * np.sin(delta)) - alpha / 2 * q * F
-        #kB
-        Sk1B = -xi * F - d_ * X11 + (1 - alpha) / alpha * (xi * Y11 + J4) * np.sin(delta)
-        Sk2B = -E + (1 - alpha) / alpha * (1 / R + J5) * np.sin(delta)
-        Sk3B = q * F - (1 - alpha) / alpha * (q * Y11 - J6) * np.sin(delta)
-        #kC
-        Sk1C = -(1 - alpha) * xi * P * np.cos(delta) - alpha * xi * Q
-        Sk2C = 2 * (1 - alpha) * (d_ / R**3 - Y0 * np.sin(delta)) * np.sin(delta) - y_ / R**3 * np.cos(
-                delta) - alpha * ((c_ + d_) / R**3 * np.sin(delta) - eta / R**3 - 3 * c_ * y_ * q / R**5)
-        Sk3C = -(1 - alpha) * q / R**3 + (y_ / R**3 - Y0 * np.cos(delta)) * np.sin(
-                delta) + alpha * ((c_ + d_) / R**3 * np.cos(delta) + 3 * c_ * d_ * q / R**5 - (
-                        Y0 * np.cos(delta) + q * Z0) * np.sin(delta))
-        #lA
-        Sl1A = (1 - alpha) / 2 * xi * Y11 * np.cos(delta) + y_ / 2 * X11 + alpha / 2 * xi * F_
-        Sl2A = alpha / 2 * E_
-        Sl3A = -(1 - alpha) / 2 * (
-                        np.sin(delta) / R - q * Y11 * np.cos(delta)) - alpha / 2 * q * F_
-        #lB
-        Sl1B = -xi * F_ - y_ * X11 + (1 - alpha) / alpha * K1 * np.sin(delta)
-        Sl2B = -E_ + (1 - alpha) / alpha * y_ * D11 * np.sin(delta)
-        Sl3B = q * F_ + (1 - alpha) / alpha * K2 * np.sin(delta)
-        #lC
-        Sl1C = (1 - alpha) * xi * P_ * np.cos(delta) - alpha * xi * Q_
-        Sl2C = 2 * (1 - alpha) * (y_ / R**3 - Y0 * np.cos(delta)) * np.sin(delta) + d_ / R**3 * np.cos(
-                delta) - alpha * ((c_ + d_) / R**3 * np.cos(delta) + 3 * c_ * d_ * q / R**5)
-        Sl3C = (y_ / R**3 - Y0 * np.cos(delta)) * np.cos(delta) - alpha * (
-                        (c_ + d_) / R**3 * np.sin(delta) - 3 * c_ * y_ * q / R**5 - Y0 * np.sin(
-                delta)**2 + q * Z0 * np.cos(delta))
-        # displacement
-        # u1A_
-        Su1A_ = theta / 2 + alpha / 2 * xi * q * Y11
-        Su2A_ = alpha / 2 * q / R
-        Su3A_ = (1 - alpha) / 2 * np.log(R + eta) - alpha / 2 * q**2 * Y11
-        # displacement gradient
-        # jA_
-        Sj1A_ = -(1 - alpha) / 2 * q * Y11 - alpha / 2 * xi**2 * q * Y32
-        Sj2A_ = - alpha / 2 * xi * q / R**3
-        Sj3A_ = (1 - alpha) / 2 * xi * Y11 + alpha / 2 * xi * q**2 * Y32
-        # kA_
-        Sk1A_ = (1 - alpha) / 2 * xi * Y11 * np.sin(delta) + d_ / 2 * X11 + alpha / 2 * xi * F
-        Sk2A_ = alpha / 2 * E
-        Sk3A_ = (1 - alpha) / 2 * (np.cos(delta) / R + q * Y11 * np.sin(delta)) - alpha / 2 * q * F
-        # lA_
-        Sl1A_ = (1 - alpha) / 2 * xi * Y11 * np.cos(delta) + y_ / 2 * X11 + alpha / 2 * xi * F_
-        Sl2A_ = alpha / 2 * E_
-        Sl3A_ = - (1 - alpha) / 2 * (np.sin(delta) / R - q * Y11 * np.cos(delta)) - alpha / 2 * q * F_
-
-        # displacement
-        Sux = 1 / (2 * np.pi) * slip_str * (Su1A - Su1A_ + Su1B + np.ones((4, 1)) * z * Su1C)
-        Suy = 1 / (2 * np.pi) * slip_str * (
-                (Su2A - Su2A_ + Su2B + np.ones((4, 1)) * z * Su2C) * np.cos(delta) -
-                (Su3A - Su3A_ + Su3B + np.ones((4, 1)) * z * Su3C) * np.sin(delta))
-        Suz = 1 / (2 * np.pi) * slip_str * (
-                (Su2A - Su2A_ + Su2B - np.ones((4, 1)) * z * Su2C) * np.sin(delta) +
-                (Su3A - Su3A_ + Su3B - np.ones((4, 1)) * z * Su3C) * np.cos(delta))
-
-        # displacement gradients
-        Sduxdx = 1 / (2 * np.pi) * slip_str * (Sj1A - Sj1A_ + Sj1B + np.ones((4, 1)) * z * Sj1C)
-        Sduydx = 1 / (2 * np.pi) * slip_str * (
-                (Sj2A - Sj2A_ + Sj2B + np.ones((4, 1)) * z * Sj2C) * np.cos(delta) -
-                (Sj3A - Sj3A_ + Sj3B + np.ones((4, 1)) * z * Sj3C) * np.sin(delta))
-        Sduzdx = 1 / (2 * np.pi) * slip_str * (
-                (Sj2A - Sj2A_ + Sj2B - np.ones((4, 1)) * z * Sj2C) * np.sin(delta) +
-                (Sj3A - Sj3A_ + Sj3B - np.ones((4, 1)) * z * Sj3C) * np.cos(delta))
-
-        Sduxdy = 1 / (2 * np.pi) * slip_str * (Sk1A - Sk1A_ + Sk1B + np.ones((4, 1)) * z * Sk1C)
-        Sduydy = 1 / (2 * np.pi) * slip_str * (
-                (Sk2A - Sk2A_ + Sk2B + np.ones((4, 1)) * z * Sk2C) * np.cos(delta) -
-                (Sk3A - Sk3A_ + Sk3B + np.ones((4, 1)) * z * Sk3C) * np.sin(delta))
-        Sduzdy = 1 / (2 * np.pi) * slip_str * (
-                (Sk2A - Sk2A_ + Sk2B - np.ones((4, 1)) * z * Sk2C) * np.sin(delta) +
-                (Sk3A - Sk3A_ + Sk3B - np.ones((4, 1)) * z * Sk3C) * np.cos(delta))
-
-        Sduxdz = 1 / (2 * np.pi) * slip_str * (Sl1A + Sl1A_ + Sl1B + Su1C + np.ones((4, 1)) * z * Sl1C)
-        Sduydz = 1 / (2 * np.pi) * slip_str * (
-                (Sl2A + Sl2A_ + Sl2B + Su2C + np.ones((4, 1)) * z * Sl2C) * np.cos(delta) -
-                (Sl3A + Sl3A_ + Sl3B + Su3C + np.ones((4, 1)) * z * Sl3C) * np.sin(delta))
-        Sduzdz = 1 / (2 * np.pi) * slip_str * (
-                (Sl2A + Sl2A_ + Sl2B - Su2C - np.ones((4, 1)) * z * Sl2C) * np.sin(delta) +
-                (Sl3A + Sl3A_ + Sl3B - Su3C - np.ones((4, 1)) * z * Sl3C) * np.cos(delta))
-    else:
-        Sux, Suy, Suz = 0, 0, 0
-        Sduxdx, Sduydx, Sduzdx = 0, 0, 0
-        Sduxdy, Sduydy, Sduzdy = 0, 0, 0
-        Sduxdz, Sduydz, Sduzdz = 0, 0, 0
-
-    # dip-slip
-    if slip_dip != 0:
-        # displacement
-        #uA
-        Du1A = alpha / 2 * q / R
-        Du2A = theta / 2 + alpha / 2 * eta * q * X11
-        Du3A = (1 - alpha) / 2 * np.log(R + xi) - alpha / 2 * q**2 * X11
-        #uB
-        Du1B = -q / R + (1 - alpha) / alpha * I3 * np.sin(delta) * np.cos(delta)
-        Du2B = -eta * q * X11 - theta - (1 - alpha) / alpha * xi / (R + d_) * np.sin(delta) * np.cos(delta)
-        Du3B = q**2 * X11 + (1 - alpha) / alpha * I4 * np.sin(delta) * np.cos(delta)
-        #uC
-        Du1C = (1 - alpha) * np.cos(delta) / R - q * Y11 * np.sin(delta) - alpha * c_ * q / R**3
-        Du2C = (1 - alpha) * y_ * X11 - alpha * c_ * eta * q * X32
-        Du3C = -d_ * X11 - xi * Y11 * np.sin(delta) - alpha * c_ * (X11 - q**2 * X32)
-        # displacement gradient
-        #jA
-        Dj1A = -alpha / 2 * xi * q / R**3
-        Dj2A = -q / 2 * Y11 - alpha / 2 * eta * q / R**3
-        Dj3A = (1 - alpha) / 2 * 1 / R + alpha / 2 * q**2 / R**3
-        #jB
-        Dj1B = xi * q / R**3 + (1 - alpha) / alpha * J4 * np.sin(delta) * np.cos(delta)
-        Dj2B = eta * q / R**3 + q * Y11 + (1 - alpha) / alpha * J5 * np.sin(delta) * np.cos(delta)
-        Dj3B = -q**2 / R**3 + (1 - alpha) / alpha * J6 * np.sin(delta) * np.cos(delta)
-        #jC
-        Dj1C = -(1 - alpha) * xi / R**3 * np.cos(delta) + xi * q * Y32 * np.sin(delta) + alpha * (
-                        3 * c_ * xi * q / R**5)
-        Dj2C = -(1 - alpha) * y_ / R**3 + alpha * 3 * c_ * eta * q / R**5
-        Dj3C = d_ / R**3 - Y0 * np.sin(delta) + alpha * c_ / R**3 * (1 - 3 * q**2 / R**2)
-        #kA
-        Dk1A = alpha / 2 * E
-        Dk2A = (1 - alpha) / 2 * d_ * X11 + xi / 2 * Y11 * np.sin(delta) + alpha / 2 * eta * G
-        Dk3A = (1 - alpha) / 2 * y_ * X11 - alpha / 2 * q * G
-        #kB
-        Dk1B = -E + (1 - alpha) / alpha * J1 * np.sin(delta) * np.cos(delta)
-        Dk2B = -eta * G - xi * Y11 * np.sin(delta) + (1 - alpha) / alpha * J2 * np.sin(delta) * np.cos(delta)
-        Dk3B = q * G + (1 - alpha) / alpha * J3 * np.sin(delta) * np.cos(delta)
-        #kC
-        Dk1C = -(1 - alpha) * eta / R**3 + Y0 * np.sin(delta)**2 - alpha * (
-                        (c_ + d_) / R**3 * np.sin(delta) - 3 * c_ * y_ * q / R**5)
-        Dk2C = (1 - alpha) * (X11 - y_**2 * X32) - alpha * c_ * (
-                        (d_ + 2 * q * np.cos(delta)) * X32 - y_ * eta * q * X53)
-        Dk3C = xi * P * np.sin(delta) + y_ * d_ * X32 + alpha * c_ * (
-                        (y_ + 2 * q * np.sin(delta)) * X32 - y_ * q**2 * X53)
-        #lA
-        Dl1A = alpha / 2 * E_
-        Dl2A = (1 - alpha) / 2 * y_ * X11 + xi / 2 * Y11 * np.cos(delta) + alpha / 2 * eta * G_
-        Dl3A = -(1 - alpha) / 2 * d_ * X11 - alpha / 2 * q * G_
-        #lB
-        Dl1B = -E_ - (1 - alpha) / alpha * K3 * np.sin(delta) * np.cos(delta)
-        Dl2B = -eta * G_ - xi * Y11 * np.cos(delta) - (1 - alpha) / alpha * xi * D11 * np.sin(delta) * np.cos(delta)
-        Dl3B = q * G_ - (1 - alpha) / alpha * K4 * np.sin(delta) * np.cos(delta)
-        #lB
-        Dl1C = -q / R**3 + Y0 * np.sin(delta) * np.cos(delta) - alpha * (
-                        (c_ + d_) / R**3 * np.cos(delta) + 3 * c_ * d_ * q / R**5)
-        Dl2C = (1 - alpha) * y_ * d_ * X32 - alpha * c_ * (
-                        (y_ - 2 * q * np.sin(delta)) * X32 + d_ * eta * q * X53)
-        Dl3C = -xi * P_ * np.sin(delta) + X11 - d_**2 * X32 - alpha * c_ * (
-                        (d_ - 2 * q * np.cos(delta)) * X32 - d_ * q**2 * X53)
-        # displacement
-        # u1A_
-        Du1A_ = alpha / 2 * q / R
-        Du2A_ = theta / 2 + alpha / 2 * eta * q * X11
-        Du3A_ = (1 - alpha) / 2 * np.log(R + xi) - alpha / 2 * q**2 * X11
-        # displacement gradient
-        # jA_
-        Dj1A_ = - alpha / 2 * xi * q / R**3
-        Dj2A_ = - q / 2 * Y11 - alpha / 2 * eta * q / R**3
-        Dj3A_ = (1 - alpha) / 2 * 1 / R + alpha / 2 * q**2 / R**3
-        # kA_
-        Dk1A_ = alpha / 2 * E
-        Dk2A_ = (1 - alpha) / 2 * d_ * X11 + xi / 2 * Y11 * np.sin(delta) + alpha / 2 * eta * G
-        Dk3A_ = (1 - alpha) / 2 * y_ * X11 - alpha / 2 * q * G
-        # lA_
-        Dl1A_ = alpha / 2 * E_
-        Dl2A_ = (1 - alpha) / 2 * y_ * X11 + xi / 2 * Y11 * np.cos(delta) + alpha / 2 * eta * G_
-        Dl3A_ = - (1 - alpha) / 2 * d_ * X11 - alpha / 2 * q * G_
-
-
-        # displacement
-        Dux = 1 / (2 * np.pi) * slip_dip * (Du1A - Du1A_ + Du1B + np.ones((4, 1)) * z * Du1C)
-        Duy = 1 / (2 * np.pi) * slip_dip * (
-                (Du2A - Du2A_ + Du2B + np.ones((4, 1)) * z * Du2C) * np.cos(delta) -
-                (Du3A - Du3A_ + Du3B + np.ones((4, 1)) * z * Du3C) * np.sin(delta))
-        Duz = 1 / (2 * np.pi) * slip_dip * (
-                (Du2A - Du2A_ + Du2B - np.ones((4, 1)) * z * Du2C) * np.sin(delta) +
-                (Du3A - Du3A_ + Du3B - np.ones((4, 1)) * z * Du3C) * np.cos(delta))
-
-        # displacement gradients
-        Dduxdx = 1 / (2 * np.pi) * slip_dip * (Dj1A - Dj1A_ + Dj1B + np.ones((4, 1)) * z * Dj1C)
-        Dduydx = 1 / (2 * np.pi) * slip_dip * (
-                (Dj2A - Dj2A_ + Dj2B + np.ones((4, 1)) * z * Dj2C) * np.cos(delta) -
-                (Dj3A - Dj3A_ + Dj3B + np.ones((4, 1)) * z * Dj3C) * np.sin(delta))
-        Dduzdx = 1 / (2 * np.pi) * slip_dip * (
-                (Dj2A - Dj2A_ + Dj2B - np.ones((4, 1)) * z * Dj2C) * np.sin(delta) +
-                (Dj3A - Dj3A_ + Dj3B - np.ones((4, 1)) * z * Dj3C) * np.cos(delta))
-        
-        Dduxdy = 1 / (2 * np.pi) * slip_dip * (Dk1A - Dk1A_ + Dk1B + np.ones((4, 1)) * z * Dk1C)
-        Dduydy = 1 / (2 * np.pi) * slip_dip * (
-                (Dk2A - Dk2A_ + Dk2B + np.ones((4, 1)) * z * Dk2C) * np.cos(delta) -
-                (Dk3A - Dk3A_ + Dk3B + np.ones((4, 1)) * z * Dk3C) * np.sin(delta))
-        Dduzdy = 1 / (2 * np.pi) * slip_dip * (
-                (Dk2A - Dk2A_ + Dk2B - np.ones((4, 1)) * z * Dk2C) * np.sin(delta) +
-                (Dk3A - Dk3A_ + Dk3B - np.ones((4, 1)) * z * Dk3C) * np.cos(delta))
-
-        Dduxdz = 1 / (2 * np.pi) * slip_dip * (Dl1A + Dl1A_ + Dl1B + Du1C + np.ones((4, 1)) * z * Dl1C)
-        Dduydz = 1 / (2 * np.pi) * slip_dip * (
-                (Dl2A + Dl2A_ + Dl2B + Du2C + np.ones((4, 1)) * z * Dl2C) * np.cos(delta) -
-                (Dl3A + Dl3A_ + Dl3B + Du3C + np.ones((4, 1)) * z * Dl3C) * np.sin(delta))
-        Dduzdz = 1 / (2 * np.pi) * slip_dip * (
-                (Dl2A + Dl2A_ + Dl2B - Du2C - np.ones((4, 1)) * z * Dl2C) * np.sin(delta) +
-                (Dl3A + Dl3A_ + Dl3B - Du3C - np.ones((4, 1)) * z * Dl3C) * np.cos(delta))
-        
-    else:
-        Dux, Duy, Duz = 0, 0, 0
-        Dduxdx, Dduydx, Dduzdx = 0, 0, 0
-        Dduxdy, Dduydy, Dduzdy = 0, 0, 0
-        Dduxdz, Dduydz, Dduzdz = 0, 0, 0
-
-
-    if tensile != 0:
-        # displacement
-        # uA
-        Tu1A = -(1 - alpha) / 2 * np.log(R + eta) - alpha / 2 * q**2 * Y11
-        Tu2A = -(1 - alpha) / 2 * np.log(R + xi) - alpha / 2 * q**2 * X11
-        Tu3A = theta / 2 - alpha / 2 * q * (eta * X11 + xi * Y11)
-        # uB
-        Tu1B = q**2 * Y11 - (1 - alpha) / alpha * I3 * np.sin(delta)**2
-        Tu2B = q**2 * X11 + (1 - alpha) / alpha * xi / (R + d_) * np.sin(delta)**2
-        Tu3B = q * (eta * X11 + xi * Y11) - theta - (1 - alpha) / alpha * I4 * np.sin(delta)**2
-        # uC
-        Tu1C = -(1 - alpha) * (np.sin(delta) / R + q * Y11 * np.cos(delta)) - alpha * (
-                np.ones((4, 1)) * z * Y11 - q**2 * Z32)
-        Tu2C = (1 - alpha) * 2 * xi * Y11 * np.sin(delta) + d_ * X11 - alpha * c_ * (
-                X11 - q**2 * X32)
-        Tu3C = (1 - alpha) * (y_ * X11 + xi * Y11 * np.cos(delta)) + alpha * q * (
-                c_ * eta * X32 + xi * Z32)
-        # displacement gradient
-        # jA
-        Tj1A = - (1 - alpha) / 2 * xi * Y11 + alpha / 2 * xi * q**2 * Y32
-        Tj2A = - (1 - alpha) / 2 * 1 / R + alpha / 2 * q**2 / R**3
-        Tj3A = - (1 - alpha) / 2 * q * Y11 - alpha / 2 * q**3 * Y32
-        # jB
-        Tj1B = -xi * q**2 * Y32 - (1 - alpha) / alpha * J4 * np.sin(delta)**2
-        Tj2B = -q**2 / R**3 - (1 - alpha) / alpha * J5 * np.sin(delta)**2
-        Tj3B = q**3 * Y32 - (1 - alpha) / alpha * J6 * np.sin(delta)**2
-        # jC
-        Tj1C = (1 - alpha) * xi / R**3 * np.sin(delta) + xi * q * Y32 * np.cos(delta) + alpha * xi * (
-                3 * c_ * eta / R**5 - 2 * Z32 - Z0)
-        Tj2C = (1 - alpha) * 2 * Y0 * np.sin(delta) - d_ / R**3 + alpha * c_ / R**3 * (
-                1 - 3 * q**2 / R**2)
-        Tj3C = -(1 - alpha) * (y_ / R**3 - Y0 * np.cos(delta)) - alpha * (
-                3 * c_ * eta * q / R**5 - q * Z0)
-        # kA
-        Tk1A = -(1 - alpha) / 2 * (np.cos(delta) / R + q * Y11 * np.sin(delta)) - alpha / 2 * q * F
-        Tk2A = -(1 - alpha) / 2 * y_ * X11 - alpha / 2 * q * G
-        Tk3A = (1 - alpha) / 2 * (d_ * X11 + xi * Y11 * np.sin(delta)) + alpha / 2 * q * H
-        # kB
-        Tk1B = q * F - (1 - alpha) / alpha * J1 * np.sin(delta)**2
-        Tk2B = q * G - (1 - alpha) / alpha * J2 * np.sin(delta)**2
-        Tk3B = -q * H - (1 - alpha) / alpha * J3 * np.sin(delta)**2
-        # kC
-        Tk1C = (1 - alpha) * (q / R**3 + Y0 * np.sin(delta) * np.cos(delta)) + alpha * (
-                np.ones((4, 1)) * z / R**3 * np.cos(delta) + 3 * c_ * d_ * q / R**5 - q * Z0 * np.sin(delta))
-        Tk2C = -(1 - alpha) * 2 * xi * P * np.sin(delta) - y_ * d_ * X32 + alpha * c_ * (
-                (y_ + 2 * q * np.sin(delta)) * X32 - y_ * q**2 * X53)
-        Tk3C = -(1 - alpha) * (xi * P * np.cos(delta) - X11 + y_**2 * X32) + alpha * c_ * (
-                (d_ + 2 * q * np.cos(delta)) * X32 - y_ * eta * q * X53) + alpha * xi * Q
-        # lA
-        Tl1A = (1 - alpha) / 2 * (np.sin(delta) / R - q * Y11 * np.cos(delta)) - alpha / 2 * q * F_
-        Tl2A = (1 - alpha) / 2 * d_ * X11 - alpha / 2 * q * G_
-        Tl3A = (1 - alpha) / 2 * (y_ * X11 + xi * Y11 * np.cos(delta)) + alpha / 2 * q * H_
-        # lB
-        Tl1B = q * F_ + (1 - alpha) / alpha * K3 * np.sin(delta)**2
-        Tl2B = q * G_ + (1 - alpha) / alpha * xi * D11 * np.sin(delta)**2
-        Tl3B = -q * H_ + (1 - alpha) / alpha * K4 * np.sin(delta)**2
-        # lC
-        Tl1C = -eta / R**3 + Y0 * np.cos(delta)**2 - alpha * (
-                np.ones((4, 1)) * z / R**3 * np.sin(delta) - 3 * c_ * y_ * q / R**5 - Y0 * np.sin(delta)**2 + q * Z0 * np.cos(delta))
-        Tl2C = (1 - alpha) * 2 * xi * P_ * np.sin(delta) - X11 + d_**2 * X32 - alpha * c_ * (
-                (d_ - 2 * q * np.cos(delta)) * X32 - d_ * q**2 * X53)
-        Tl3C = (1 - alpha) * (
-                xi * P_ * np.cos(delta) + y_ * d_ * X32) + alpha * c_ * (
-                (y_ - 2 * q * np.sin(delta)) * X32 + d_ * eta * q * X53) + alpha * xi * Q_
-        # displacement
-        # uA_
-        Tu1A_ = - (1 - alpha) / 2 * np.log(R + eta) - alpha / 2 * q**2 * Y11
-        Tu2A_ = - (1 - alpha) / 2 * np.log(R + xi) - alpha / 2 * q**2 * X11
-        Tu3A_ = theta / 2 - alpha / 2 * q * (eta * X11 + xi * Y11)
-        # displacement gradient
-        # jA_
-        Tj1A_ = - (1 - alpha) / 2 * xi * Y11 + alpha / 2 * xi * q**2 * Y32
-        Tj2A_ = - (1 - alpha) / 2 * 1 / R + alpha / 2 * q**2 / R**3
-        Tj3A_ = - (1 - alpha) / 2 * q * Y11 - alpha / 2 * q**3 * Y32
-        # kA_
-        Tk1A_ = - (1 - alpha) / 2 * (np.cos(delta) / R + q * Y11 * np.sin(delta)) - alpha / 2 * q * F
-        Tk2A_ = - (1 - alpha) / 2 * y_ * X11 - alpha / 2 * q * G
-        Tk3A_ = (1 - alpha) / 2 * (d_ * X11 + xi * Y11 * np.sin(delta)) + alpha / 2 * q * H
-        # lA_
-        Tl1A_ = (1 - alpha) / 2 * (np.sin(delta) / R - q * Y11 * np.cos(delta)) - alpha / 2 * q * F_
-        Tl2A_ = (1 - alpha) / 2 * d_ * X11 - alpha / 2 * q * G_
-        Tl3A_ = (1 - alpha) / 2 * (y_ * X11 + xi * Y11 * np.cos(delta)) + alpha / 2 * q * H_
-    
-        # Tensile
-        # Displacement
-        Tux = (1 / (2 * np.pi)) * tensile * (Tu1A - Tu1A_ + Tu1B + np.ones((4, 1)) * z * Tu1C)
-        Tuy = (1 / (2 * np.pi)) * tensile * ((Tu2A - Tu2A_ + Tu2B + np.ones((4, 1)) * z * Tu2C) * np.cos(delta) -
-                                                (Tu3A - Tu3A_ + Tu3B + np.ones((4, 1)) * z * Tu3C) * np.sin(delta))
-        Tuz = (1 / (2 * np.pi)) * tensile * ((Tu2A - Tu2A_ + Tu2B - np.ones((4, 1)) * z * Tu2C) * np.sin(delta) +
-                                                (Tu3A - Tu3A_ + Tu3B - np.ones((4, 1)) * z * Tu3C) * np.cos(delta))
-
-        # Displacement gradients
-        Tduxdx = (1 / (2 * np.pi)) * tensile * (Tj1A - Tj1A_ + Tj1B + np.ones((4, 1)) * z * Tj1C)
-        Tduydx = (1 / (2 * np.pi)) * tensile * ((Tj2A - Tj2A_ + Tj2B + np.ones((4, 1)) * z * Tj2C) * np.cos(delta) -
-                                                (Tj3A - Tj3A_ + Tj3B + np.ones((4, 1)) * z * Tj3C) * np.sin(delta))
-        Tduzdx = (1 / (2 * np.pi)) * tensile * ((Tj2A - Tj2A_ + Tj2B - np.ones((4, 1)) * z * Tj2C) * np.sin(delta) +
-                                                (Tj3A - Tj3A_ + Tj3B - np.ones((4, 1)) * z * Tj3C) * np.cos(delta))
-        Tduxdy = (1 / (2 * np.pi)) * tensile * (Tk1A - Tk1A_ + Tk1B + np.ones((4, 1)) * z * Tk1C)
-        Tduydy = (1 / (2 * np.pi)) * tensile * ((Tk2A - Tk2A_ + Tk2B + np.ones((4, 1)) * z * Tk2C) * np.cos(delta) -
-                                                (Tk3A - Tk3A_ + Tk3B + np.ones((4, 1)) * z * Tk3C) * np.sin(delta))
-        Tduzdy = (1 / (2 * np.pi)) * tensile * ((Tk2A - Tk2A_ + Tk2B - np.ones((4, 1)) * z * Tk2C) * np.sin(delta) +
-                                                (Tk3A - Tk3A_ + Tk3B - np.ones((4, 1)) * z * Tk3C) * np.cos(delta))
-        Tduxdz = (1 / (2 * np.pi)) * tensile * (Tl1A + Tl1A_ + Tl1B + Tu1C + np.ones((4, 1)) * z * Tl1C)
-        Tduydz = (1 / (2 * np.pi)) * tensile * ((Tl2A + Tl2A_ + Tl2B + Tu2C + np.ones((4, 1)) * z * Tl2C) * np.cos(delta) -
-                                                (Tl3A + Tl3A_ + Tl3B + Tu3C + np.ones((4, 1)) * z * Tl3C) * np.sin(delta))
-        Tduzdz = (1 / (2 * np.pi)) * tensile * ((Tl2A + Tl2A_ + Tl2B - Tu2C - np.ones((4, 1)) * z * Tl2C) * np.sin(delta) +
-                                                (Tl3A + Tl3A_ + Tl3B - Tu3C - np.ones((4, 1)) * z * Tl3C) * np.cos(delta))
-    else:
-        Tux, Tuy, Tuz = 0, 0, 0
-        Tduxdx, Tduydx, Tduzdx = 0, 0, 0
-        Tduxdy, Tduydy, Tduzdy = 0, 0, 0
-        Tduxdz, Tduydz, Tduzdz = 0, 0, 0
-
-    factor=np.ones((xi.shape))
-    factor[1,:]=factor[1,:]*-1
-    factor[2,:]=factor[2,:]*-1
-
-    G1 = np.sum(factor * (Sux + Dux + Tux),axis=0)
-    G2 = np.sum(factor * (Suy + Duy + Tuy),axis=0)
-    G3 = np.sum(factor * (Suz + Duz + Tuz),axis=0)
-
-    Dg11 = np.sum(factor * (Sduxdx + Dduxdx + Tduxdx),axis=0)
-    Dg12 = np.sum(factor * (Sduxdy + Dduxdy + Tduxdy),axis=0)
-    Dg13 = np.sum(factor * (Sduxdz + Dduxdz + Tduxdz),axis=0)
-
-    Dg21 = np.sum(factor * (Sduydx + Dduydx + Tduydx),axis=0)
-    Dg22 = np.sum(factor * (Sduydy + Dduydy + Tduydy),axis=0)
-    Dg23 = np.sum(factor * (Sduydz + Dduydz + Tduydz),axis=0)
-
-    Dg31 = np.sum(factor * (Sduzdx + Dduzdx + Tduzdx),axis=0)
-    Dg32 = np.sum(factor * (Sduzdy + Dduzdy + Tduzdy),axis=0)
-    Dg33 = np.sum(factor * (Sduzdz + Dduzdz + Tduzdz),axis=0)
-
-    # Coordinate transformation
-    Gx = np.cos(angle_Str) * (-G2) - np.sin(angle_Str) * G1
-    Gy = np.sin(angle_Str) * (-G2) + np.cos(angle_Str) * G1
-    Gz = G3
-
-    displacement = np.array([Gx, Gy, Gz])
-
-    Dg11_ = Dg22
-    Dg12_ = -Dg21
-    Dg13_ = -Dg23
-
-    Dg21_ = -Dg12
-    Dg22_ = Dg11
-    Dg23_ = Dg13
-
-    Dg31_ = -Dg32
-    Dg32_ = Dg31
-    Dg33_ = Dg33
-
-    # Coordinate transformation
-    Dgxx = (np.cos(angle_Str) * Dg11_ - np.sin(angle_Str) * Dg21_) * np.cos(angle_Str) + \
-    (np.cos(angle_Str) * Dg12_ - np.sin(angle_Str) * Dg22_) * (-np.sin(angle_Str))
-    Dgyx = (np.sin(angle_Str) * Dg11_ + np.cos(angle_Str) * Dg21_) * np.cos(angle_Str) - \
-    (np.sin(angle_Str) * Dg12_ + np.cos(angle_Str) * Dg22_) * np.sin(angle_Str)
-    Dgzx = Dg31_ * np.cos(angle_Str) - Dg32_ * np.sin(angle_Str)
-
-    Dgxy = (np.cos(angle_Str) * Dg11_ - np.sin(angle_Str) * Dg21_) * np.sin(angle_Str) + \
-    (np.cos(angle_Str) * Dg12_ - np.sin(angle_Str) * Dg22_) * np.cos(angle_Str)
-    Dgyy = (np.sin(angle_Str) * Dg11_ + np.cos(angle_Str) * Dg21_) * np.sin(angle_Str) + \
-    (np.sin(angle_Str) * Dg12_ + np.cos(angle_Str) * Dg22_) * np.cos(angle_Str)
-    Dgzy = np.sin(angle_Str) * Dg31_ + np.cos(angle_Str) * Dg32_
-
-    Dgxz = np.cos(angle_Str) * Dg13_ - np.sin(angle_Str) * Dg23_
-    Dgyz = np.sin(angle_Str) * Dg13_ + np.cos(angle_Str) * Dg23_
-    Dgzz = Dg33_
-
-    gradient = np.array([[Dgxx, Dgxy, Dgxz],
-                    [Dgyx, Dgyy, Dgyz],
-                    [Dgzx, Dgzy, Dgzz]])
-    
-    gradient = gradient.reshape(9, x.size)
-    # Strain components
-    Ex = Dgxx
-    Ey = Dgyy
-    Ez = Dgzz
-    Exy = 0.5 * (Dgyx + Dgxy)
-    Eyz = 0.5 * (Dgyz + Dgzy)
-    Ezx = 0.5 * (Dgzx + Dgxz)
-
-    # Stress components
-    Sx = youngs / ((1 + nu) * (1 - 2 * nu)) * (Ex + nu * (Ey + Ez - Ex))
-    Sy = youngs / ((1 + nu) * (1 - 2 * nu)) * (Ey + nu * (Ex + Ez - Ey))
-    Sz = youngs / ((1 + nu) * (1 - 2 * nu)) * (Ez + nu * (Ey + Ex - Ez))
-    Sxy = 2 * Gshear * Exy
-    Syz = 2 * Gshear * Eyz
-    Szx = 2 * Gshear * Ezx
-
-    # Stress vector
-    Stress = np.array([Sx, Sxy, Szx, Sy, Syz, Sz])
-
-    return(displacement,gradient,Stress)
-
-def disloc3D_wrapper(m,coordinates,return_stress=False,return_2d=False):
-
-        class makeFault:
-
-                nu = params.nu
-                Gshear = params.Gshear
-
-                def __init__(self, m):
-                        self.L = m[0]
-                        self.W = m[1]
-                        self.c = m[2]
-                        self.delta = np.deg2rad(m[3])
-                        self.strike = -np.deg2rad(m[4]) # clockwise is positive
-                        self.centroids = np.array([m[5],m[6]])
-                        self.slip = m[7], m[8], m[9]
-                        
-                        self.rotate = np.array([[-np.sin(self.strike), np.cos(self.strike)],
-                                                [-np.cos(self.strike), -np.sin(self.strike)]])
-                def coordTrans(self,X,Y):
-                        coordinates_vector = np.array([X-self.centroids[0],Y-self.centroids[1]])
-                        x, y = np.dot(self.rotate, coordinates_vector)
-                        x = x + 0.5 * self.L
-                        return(x,y)
-                
-                @classmethod
-                def elastic(cls):
-                        if cls.nu == 0.5: cls.nu = 0.4999
-                        youngs = 2 * cls.Gshear * (1 + cls.nu)
-                        lambda_ = cls.nu * youngs / ((1 + cls.nu) * (1 - 2 * cls.nu))
-                        alpha = (lambda_ + cls.Gshear) / (lambda_ + 2 * cls.Gshear)
-                        return(youngs,alpha)
-                
-        disloc=makeFault(np.squeeze(m))
-
-        if checkInputs(disloc,coordinates) == True: 
-              displacement,gradient,Stress=disloc3D(disloc,coordinates)
-        else: 
-              displacement, gradient, Stress = np.nan
-
-
-        if return_2d:
-            # in this wrapper function, ensure efficient memory use when called by only returning neccesary components
-            # indicies for gradient 2D correspond to xx, xy, yx, yy
-            # indicies for stress correspond to xx, xy, yy (since xy = yx)
-            displacement_2D=displacement[[0,1],:]
-            gradient_2D=gradient[[0,1,3,4],:]
-            stress_2D=Stress[[0,1,3],:]
-            if return_stress:
-                 return(displacement_2D,gradient_2D,stress_2D)
-            else:
-                 return(displacement_2D,gradient_2D)
-        else:        
-            if return_stress:
-                return(displacement,gradient,Stress)
-            else:
-                return(displacement,gradient)
-
-# cholesky factorization much faster than numpy's standard multivariate_normal
-# which uses svd for legacy reasons (?)
-# still much slower than matlab's mvnrnd, but improved
-# currently not using.
-def chol_mvnrnd(mean, cov, num):
-    result = np.empty((num,mean.size))
-    for i in range(num):
-        result[i,:] = mean + np.linalg.cholesky(cov) @ np.random.standard_normal(mean.size)
-    return(result)

@@ -3,7 +3,7 @@
 gps_file = 'data/GNSS_velocities_alpides.txt'    
 creeping_file = []
 origin = [32.5, 35]
-lon_range = [-15,142]
+lon_range = [-20,150]
 lat_range = [5, 60] 
 nom_node_spacing = 400.
 
@@ -31,11 +31,11 @@ refine = 1
 nu = 0.25
 Gshear = 1
 
-betas = [40]
+betas = [35,40,45]
 # Compute uncertainties? 
 uncertainty = False
 # number of realizations of strain rate for each beta value
-num = 25
+num = 50
 # relative weight on fitting creep rate data (creeping faults)
 Wcreep = 1
 # optional two-step minimization of strain rates below threshold value

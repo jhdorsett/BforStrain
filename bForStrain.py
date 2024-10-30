@@ -89,7 +89,8 @@ class Mesh:
             print("Longitude data appears to span 0-360, applying correction.")
 
         self.xy_gps = tools.llh2local(self.lon,self.lat)
-
+        self.xy_gps = self.xy_gps
+        
         self.vel = Velocity(data[:, 2],data[:, 3],data[:, 4],data[:, 5])
         # set minimum velocity sigma
         self.vel.Sige[self.vel.Sige < 0.5] = 0.5
@@ -442,7 +443,6 @@ class inversion_results:
         pickle.dump(self,output)
         output.close()
 
-
 def Inversion(mesh):
     # Generates Ge_x, Ge_y, Gn_x, Gn_y
     results=inversion_results()
@@ -587,11 +587,12 @@ def Inversion(mesh):
             print("Generating uncertainty matrices. Warning: this is very slow.")
             J = np.zeros(Cov_exx.shape[0])  
             # Generate Exx realizations
-            Exxs = (Exxs + np.random.multivariate_normal(J, Cov_exx, params.num)).T
-            Exys = (Exys + np.random.multivariate_normal(J, Cov_exy, params.num)).T
-            Eyys = (Eyys + np.random.multivariate_normal(J, Cov_eyy, params.num)).T
-            Ves  = (Ves  + np.random.multivariate_normal(J, Cov_Ve,  params.num)).T
-            Vns  = (Vns  + np.random.multivariate_normal(J, Cov_Vn,  params.num)).T
+            rng = np.random.default_rng()
+            Exxs = (Exxs + rng.multivariate_normal(J, Cov_exx, params.num, method='eigh')).T
+            Exys = (Exys + rng.multivariate_normal(J, Cov_exy, params.num, method='eigh')).T
+            Eyys = (Eyys + rng.multivariate_normal(J, Cov_eyy, params.num, method='eigh')).T
+            Ves  = (Ves  + rng.multivariate_normal(J, Cov_Ve,  params.num, method='eigh')).T
+            Vns  = (Vns  + rng.multivariate_normal(J, Cov_Vn,  params.num, method='eigh')).T
 
         results.mhats.append(mhat)
         results.dhats.append(dhat)
