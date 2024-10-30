@@ -1,9 +1,10 @@
-name: bForStrain
+name: BforStrain
 channels:
   - conda-forge
   - defaults
 dependencies:
   - python=3.9
+  - ipykernel
   - numpy
   - pandas
   - matplotlib
