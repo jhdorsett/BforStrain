@@ -12,4 +12,37 @@ conda env create -f environment.yml
 conda activate BforStrain
 ```
 
-Then you can execute the code using the data provided using ``run.ipynb``.
+Then the code can be executed with the data provided using ``run.ipynb``.
+
+Conceptual project structure:
+```
+BforStrain
+   | bForStrain.py
+   |   |-- Mesh
+   |   |   |-- create_gps_obs
+   |   |   |-- create_creeping_segs
+   |   |   |-- create_creeping_segs
+   |   |   |-- crop
+   |   |   |-- save
+   |   |   |-- plotting_functions
+   |   |   |-- coordinate_transforms
+   |   |-- Inversion
+   |   |   |-- bodyforce_greens_functions
+   |   |   |-- creeping_greens_functions
+   |   |   |-- prepare_inversion
+   |   |   |-- invert
+   |   |   |-- generate_uncertainty
+   |   |   |-- post_process_results
+   | disloc3d.py
+   |   |-- dc3d
+   |   |-- dc3d_wrapper
+   | mesh2d.py
+   |   |-- smooth2d
+   |   |-- helper_functions
+   | tools.py
+   |   |-- helper_functions
+   | data/
+   |   |-- geodetic veolcities
+   |   |-- creeping faults
+   |   |-- coastline data (plotting)
+```
